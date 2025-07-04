@@ -410,7 +410,7 @@ class FeatureProcessor:
                     molecules_optimized += 1
             
             molecules_processed.add(name)
-        
+
         # Initialiser les colonnes avec des valeurs par défaut
         matches_df['ms2_mz_reference'] = [[] for _ in range(len(matches_df))]
         matches_df['ms2_intensities_reference'] = [[] for _ in range(len(matches_df))]
@@ -436,7 +436,28 @@ class FeatureProcessor:
                 matches_df.at[idx, 'ms2_mz_reference'] = []
                 matches_df.at[idx, 'ms2_intensities_reference'] = []
                 matches_df.at[idx, 'collision_energy_reference'] = None
+
+
+        # Identifier les cas où on a un score MS2 > 0 mais has_ms2_db = 0
+        inconsistent_mask = (
+            (matches_df['ms2_similarity_score'] > 0) & 
+            (matches_df['has_ms2_db'] == 0)
+        )
+
+        if inconsistent_mask.any():
+            n_corrections = inconsistent_mask.sum()
+            
+            # Corriger: si on a un score MS2 > 0, alors has_ms2_db devrait être 1
+            matches_df.loc[inconsistent_mask, 'has_ms2_db'] = 1
+            
+            # Afficher quelques exemples
+            corrected_molecules = matches_df.loc[inconsistent_mask, 'match_name'].head(5).tolist()
+        from ..utils.matching_utils import assign_confidence_level
         
+        for idx in tqdm(matches_df.index, desc="Attribution niveaux"):
+            confidence_level, confidence_reason = assign_confidence_level(matches_df.loc[idx])
+            matches_df.loc[idx, ['confidence_level', 'confidence_reason']] = [confidence_level, confidence_reason]
+
         return matches_df
 
     def create_feature_matrix(

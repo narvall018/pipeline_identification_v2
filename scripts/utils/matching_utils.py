@@ -202,14 +202,44 @@ def find_matches_window(
         axis=1
     )
 
-    # Vérification MS2 disponible
-    db_df['has_ms2_db'] = db_df['peaks_ms2_mz'].apply(
-        lambda x: 1 if isinstance(x, (list, np.ndarray)) and len(x) > 0 else 0
-    )
+    # NOUVELLE VALIDATION MS2 COHÉRENTE
+    def validate_ms2_for_matching(row):
+        """Validation MS2 robuste pour le matching"""
+        mz_data = row['peaks_ms2_mz']
+        int_data = row['peaks_ms2_intensities']
+        
+        # Vérifier que les deux champs existent et sont des listes non vides
+        mz_valid = isinstance(mz_data, (list, np.ndarray)) and len(mz_data) > 0
+        int_valid = isinstance(int_data, (list, np.ndarray)) and len(int_data) > 0
+        
+        # Vérifier que les longueurs correspondent
+        if mz_valid and int_valid:
+            return len(mz_data) == len(int_data)
+        
+        return False
 
-    # Agrégation par molécule
-    ms2_df = db_df.groupby('molecule_id')['has_ms2_db'].max().reset_index()
-    db_df = db_df.drop(columns=['has_ms2_db']).merge(ms2_df, on='molecule_id', how='left')
+    # Si has_ms2_db existe déjà (pré-traitement), on le préserve et vérifie
+    if 'has_ms2_db' not in db_df.columns:
+        db_df['has_ms2_db'] = db_df.apply(validate_ms2_for_matching, axis=1).astype(int)
+    else:
+        # Vérifier la cohérence et corriger si nécessaire
+        db_df['has_ms2_db_corrected'] = db_df.apply(validate_ms2_for_matching, axis=1).astype(int)
+        
+        # Comparer et corriger les incohérences
+        inconsistent_mask = db_df['has_ms2_db'] != db_df['has_ms2_db_corrected']
+        if inconsistent_mask.any():
+            db_df['has_ms2_db'] = db_df['has_ms2_db_corrected']
+        
+        # Nettoyer la colonne temporaire
+        db_df = db_df.drop(columns=['has_ms2_db_corrected'])
+
+    # Agrégation par molécule SANS drop/merge pour éviter les pertes
+    molecule_ms2_status = db_df.groupby('molecule_id')['has_ms2_db'].max()
+
+    # Application directe sans merge pour préserver l'intégrité
+    for molecule_id, max_status in molecule_ms2_status.items():
+        mask = db_df['molecule_id'] == molecule_id
+        db_df.loc[mask, 'has_ms2_db'] = max_status
 
     # Tri pour recherche optimisée
     db_df = db_df.sort_values('mz').reset_index(drop=True)
