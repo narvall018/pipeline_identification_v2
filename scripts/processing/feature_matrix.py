@@ -460,6 +460,72 @@ class FeatureProcessor:
 
         return matches_df
 
+    def _add_sample_intensities(
+        self,
+        feature_info_df: pd.DataFrame,
+        matrix: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Ajoute les intensités détaillées par échantillon pour chaque feature.
+        
+        Args:
+            feature_info_df: DataFrame des informations sur les features
+            matrix: Matrice d'intensités (échantillons x features)
+            
+        Returns:
+            pd.DataFrame: DataFrame avec les intensités par échantillon ajoutées
+        """
+        try:
+            intensities_by_sample = []
+            sample_names_ordered = []
+            
+            for idx, feature in feature_info_df.iterrows():
+                # Construire le nom de la feature comme dans la matrice
+                feature_name = f"{feature['feature_id']}_mz{feature['mz']:.4f}"
+                
+                if feature_name in matrix.columns:
+                    # Récupérer les intensités pour tous les échantillons
+                    feature_intensities = matrix[feature_name]
+                    
+                    # Créer la liste des intensités dans l'ordre des échantillons
+                    sample_intensities = []
+                    sample_names = []
+                    
+                    for sample in matrix.index:
+                        intensity = feature_intensities.loc[sample]
+                        sample_intensities.append(float(intensity))
+                        sample_names.append(sample)
+                    
+                    intensities_by_sample.append(sample_intensities)
+                    
+                    # Garder l'ordre des échantillons pour référence (première fois seulement)
+                    if idx == 0:
+                        sample_names_ordered = sample_names.copy()
+                        
+                else:
+                    # Si la feature n'est pas trouvée, créer une liste de zéros
+                    zero_intensities = [0.0] * len(matrix.index)
+                    intensities_by_sample.append(zero_intensities)
+                    
+                    if idx == 0:
+                        sample_names_ordered = list(matrix.index)
+            
+            # Ajouter les nouvelles colonnes
+            feature_info_df['intensities_by_sample'] = intensities_by_sample
+            feature_info_df['sample_names_order'] = [sample_names_ordered] * len(feature_info_df)
+            
+            print(f"   ✓ Intensités détaillées ajoutées pour {len(feature_info_df)} features")
+            print(f"   ✓ Ordre des échantillons: {sample_names_ordered}")
+            
+            return feature_info_df
+            
+        except Exception as e:
+            print(f"❌ Erreur lors de l'ajout des intensités par échantillon: {str(e)}")
+            # En cas d'erreur, ajouter des colonnes vides
+            feature_info_df['intensities_by_sample'] = [[] for _ in range(len(feature_info_df))]
+            feature_info_df['sample_names_order'] = [[] for _ in range(len(feature_info_df))]
+            return feature_info_df 
+    
     def create_feature_matrix(
         self,
         input_dir: Path,
@@ -492,6 +558,10 @@ class FeatureProcessor:
                 # VÉRIFICATION: S'assurer que feature_id existe
                 if 'feature_id' not in feature_info_clean.columns:
                     feature_info_clean['feature_id'] = [f"F{i+1:04d}" for i in range(len(feature_info_clean))]
+                
+                # AJOUT DES INTENSITÉS PAR ÉCHANTILLON
+                print("\n📊 Ajout des intensités détaillées par échantillon...")
+                feature_info_clean = self._add_sample_intensities(feature_info_clean, matrix)
                 
                 # Nettoyer identifications
                 identifications_clean = identifications.reset_index(drop=True)
@@ -615,7 +685,7 @@ class FeatureProcessor:
                 # Sauvegarder CSV avec conversion lisible des listes
                 csv_df = summary_df.copy()
                 list_columns = ['ms2_mz_experimental', 'ms2_intensities_experimental',
-                            'ms2_mz_reference', 'ms2_intensities_reference']
+                            'ms2_mz_reference', 'ms2_intensities_reference', 'intensities_by_sample']
                 
                 def format_list_for_csv(x):
                     """Convertit une liste en format lisible [val1,val2,val3] pour CSV"""
@@ -623,7 +693,7 @@ class FeatureProcessor:
                         formatted_values = []
                         for item in x:
                             if isinstance(item, float):
-                                formatted_values.append(f"{item:.4f}".rstrip('0').rstrip('.'))
+                                formatted_values.append(f"{item:.1f}".rstrip('0').rstrip('.'))
                             elif isinstance(item, int):
                                 formatted_values.append(str(item))
                             else:
@@ -646,6 +716,9 @@ class FeatureProcessor:
                 # S'assurer que feature_id existe
                 if 'feature_id' not in feature_info_clean.columns:
                     feature_info_clean['feature_id'] = [f"F{i+1:04d}" for i in range(len(feature_info_clean))]
+                
+                # AJOUT DES INTENSITÉS PAR ÉCHANTILLON même sans identifications
+                feature_info_clean = self._add_sample_intensities(feature_info_clean, matrix)
                 
                 # Ajouter les colonnes manquantes pour la compatibilité avec les visualisations
                 feature_info_clean['match_name'] = None
